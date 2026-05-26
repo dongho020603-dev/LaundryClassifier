@@ -1,0 +1,54 @@
+# dependencies
+node_modules/
+
+# React Native / Metro
+.metro-health-check*
+
+# Expo (legacy)
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Android build outputs
+android/app/build/
+android/build/
+android/.gradle/
+android/app/.cxx/
+android/local.properties
+
+# iOS (not used)
+/ios
+
+# Native artifacts
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+
+# TypeScript
+*.tsbuildinfo
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# temp
+*.log
+
+nul

@@ -1,0 +1,9 @@
+{
+  "ignore_dirs": [
+    "node_modules",
+    ".git",
+    "android/.gradle",
+    "android/build",
+    "android/.cxx"
+  ]
+}

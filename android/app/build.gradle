@@ -1,0 +1,68 @@
+apply plugin: "com.android.application"
+apply plugin: "org.jetbrains.kotlin.android"
+apply plugin: "com.facebook.react"
+
+react {
+    autolinkLibrariesWithApp()
+}
+
+def enableHermes = project.findProperty("android.enableHermes") ?: true
+def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
+
+android {
+    ndkVersion rootProject.ext.ndkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
+    compileSdk rootProject.ext.compileSdkVersion
+
+    namespace 'com.anonymous.LaundryClassifier'
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    defaultConfig {
+        applicationId 'com.anonymous.LaundryClassifier'
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1.0.0"
+        buildConfigField("boolean", "IS_NEW_ARCHITECTURE_ENABLED", "false")
+        buildConfigField("boolean", "IS_HERMES_ENABLED", enableHermes.toString())
+    }
+
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+        release {
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+        }
+    }
+}
+
+android.aaptOptions {
+    noCompress "tflite"
+}
+
+dependencies {
+    implementation("com.facebook.react:react-android")
+    implementation project(':react-native-image-picker')
+    implementation 'org.tensorflow:tensorflow-lite:2.14.0'
+    implementation 'org.tensorflow:tensorflow-lite-api:2.14.0'
+
+    if (enableHermes) {
+        implementation("com.facebook.react:hermes-android")
+    } else {
+        implementation jscFlavor
+    }
+}
