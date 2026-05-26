@@ -1,434 +1,782 @@
-import React, {useState, useMemo} from 'react';
+import React, {useEffect, useMemo, useState} from 'react';
 import {
   View,
   Text,
+  Image,
   StyleSheet,
   SafeAreaView,
   TouchableOpacity,
   ScrollView,
+  ActivityIndicator,
+  Dimensions,
 } from 'react-native';
-import {SYMBOLS, CATEGORY_ORDER, CATEGORY_LABEL} from '../data/laundrySymbolData';
+import ImageProcessingService from '../services/imageProcessingService';
+import NativeLaundryYOLO, {Detection} from '../services/NativeLaundryYOLO';
 import {
-  categorize,
-  countByStatus,
-  mainSubBody,
-  sortedForDisplay,
-  buildSteps,
-  detectWarnings,
-  proCareBanners,
-  statusToState,
-  getOverallState,
-  STATE_COLORS,
-  StateType,
+  classifyCase,
+  buildCase0,
+  buildCase1,
+  buildCase2,
+  buildCase3,
+  CaseType,
+  Case1Content,
+  Case2Content,
 } from '../data/laundryLogic';
+import {Colors, Radius, Spacing, Typography} from '../theme/tokens';
+import SaveScreen from './SaveScreen';
+
+interface ResultScreenProps {
+  imageUri: string;
+  onBackToHome: () => void;
+  onRetake: () => void;
+}
 
 interface DetectionResult {
   label: string;
   confidence: number;
   classId: number;
+  bbox?: number[];
 }
 
-interface ResultScreenProps {
-  imageUri: string;
-  detections: DetectionResult[];
-  onBackToHome: () => void;
-  onRetake: () => void;
-}
+const CLASS_NAMES: Record<number, string> = {
+  0: 'bleach_any', 1: 'bleach_oxygen_only', 2: 'do_not_bleach',
+  3: 'do_not_dry_clean', 4: 'do_not_iron', 5: 'do_not_tumble_dry',
+  6: 'do_not_wash', 7: 'do_not_wet_clean', 8: 'drip_flat_dry',
+  9: 'drip_flat_dry_shade', 10: 'drip_line_dry', 11: 'drip_line_dry_shade',
+  12: 'dry_clean_hc_mild', 13: 'dry_clean_hc_normal', 14: 'dry_clean_perc_mild',
+  15: 'dry_clean_perc_normal', 16: 'flat_dry', 17: 'flat_dry_shade',
+  18: 'iron_110c', 19: 'iron_150c', 20: 'iron_200c',
+  21: 'line_dry', 22: 'line_dry_shade', 23: 'tumble_dry_mild',
+  24: 'tumble_dry_normal', 25: 'wash_by_hand', 26: 'washing_mild_30',
+  27: 'washing_mild_40', 28: 'washing_mild_60', 29: 'washing_normal_30',
+  30: 'washing_normal_40', 31: 'washing_normal_60', 32: 'washing_normal_95',
+  33: 'washing_very_mild_30', 34: 'washing_very_mild_40',
+  35: 'wet_clean_mild', 36: 'wet_clean_normal', 37: 'wet_clean_very_mild',
+};
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const MODEL_INPUT_SIZE = 640;
+const ANALYSIS_IMG_SIZE = SCREEN_WIDTH - Spacing.lg * 2;
+const BBOX_PALETTE = Colors.bboxPalette;
 
 export default function ResultScreen({
-  detections,
+  imageUri,
   onBackToHome,
   onRetake,
 }: ResultScreenProps) {
-  const [view, setView] = useState<'summary' | 'detail'>('summary');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [detections, setDetections] = useState<DetectionResult[]>([]);
+  const [resizedUri, setResizedUri] = useState<string | null>(null);
+  const [inferenceMs, setInferenceMs] = useState<number | null>(null);
+  const [tab, setTab] = useState<'result' | 'analysis'>('result');
+  const [showSave, setShowSave] = useState(false);
 
-  const labels = useMemo(
-    () => detections.map(d => d.label).filter(l => SYMBOLS[l]),
-    [detections],
-  );
+  // ── 추론 파이프라인 (마운트 시 1회) ──
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
 
-  const counts = useMemo(() => countByStatus(labels), [labels]);
-  const msb = useMemo(() => mainSubBody(labels), [labels]);
-  const {grouped} = useMemo(() => categorize(labels), [labels]);
-  const overallState = useMemo(() => getOverallState(counts), [counts]);
-  const sortedLabels = useMemo(() => sortedForDisplay(labels), [labels]);
-  const steps = useMemo(() => buildSteps(labels), [labels]);
-  const warnings = useMemo(() => detectWarnings(labels), [labels]);
-  const banners = useMemo(() => proCareBanners(labels), [labels]);
+        try {
+          await NativeLaundryYOLO.loadModel();
+        } catch (e) {
+          console.warn('Model load warning:', e);
+        }
 
-  const today = new Date().toLocaleDateString('ko-KR', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-  });
+        const resized = await ImageProcessingService.resizeImageTo640x640(imageUri);
+        setResizedUri(resized.uri);
 
-  if (view === 'detail') {
+        const t0 = Date.now();
+        const out = await NativeLaundryYOLO.detect(resized.uri);
+        setInferenceMs(out.inferenceTime || Date.now() - t0);
+
+        const mapped: DetectionResult[] = out.detections.map((d: Detection) => ({
+          label: CLASS_NAMES[d.classId] || `class_${d.classId}`,
+          confidence: d.confidence,
+          classId: d.classId,
+          bbox: d.bbox,
+        }));
+        setDetections(mapped);
+      } catch (e: any) {
+        console.error('Inference error:', e);
+        setError(e.message || '분석에 실패했어요');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [imageUri]);
+
+  const labels = useMemo(() => detections.map(d => d.label), [detections]);
+  const caseType: CaseType = useMemo(() => classifyCase(labels), [labels]);
+
+  const handleSave = () => setShowSave(true);
+
+  // ── 로딩 ──
+  if (loading) {
     return (
-      <SafeAreaView style={s.container}>
-        {/* 헤더 */}
-        <View style={s.header}>
-          <TouchableOpacity onPress={() => setView('summary')} style={s.backArrow}>
-            <Text style={s.backArrowText}>{'<'}</Text>
-          </TouchableOpacity>
-          <Text style={s.headerTitle}>상세 가이드</Text>
+      <SafeAreaView style={s.root}>
+        <Header onBack={onBackToHome} />
+        <View style={s.loadingWrap}>
+          <ActivityIndicator size="large" color={Colors.ctaGreen} />
+          <Text style={s.loadingText}>세탁 기호를 분석하고 있어요</Text>
+          <Text style={s.loadingSub}>잠시만 기다려 주세요</Text>
         </View>
-
-        <ScrollView style={s.scroll} contentContainerStyle={s.scrollInner}>
-          {/* 카운트 서브헤더 */}
-          <View style={s.countRow}>
-            {counts['금지'] > 0 && (
-              <View style={[s.countBadge, {backgroundColor: STATE_COLORS.forbidden.bg}]}>
-                <Text style={[s.countText, {color: STATE_COLORS.forbidden.border}]}>
-                  금지 {counts['금지']}
-                </Text>
-              </View>
-            )}
-            {counts['주의'] > 0 && (
-              <View style={[s.countBadge, {backgroundColor: STATE_COLORS.caution.bg}]}>
-                <Text style={[s.countText, {color: STATE_COLORS.caution.border}]}>
-                  주의 {counts['주의']}
-                </Text>
-              </View>
-            )}
-            {counts['안전'] > 0 && (
-              <View style={[s.countBadge, {backgroundColor: STATE_COLORS.safe.bg}]}>
-                <Text style={[s.countText, {color: STATE_COLORS.safe.border}]}>
-                  안전 {counts['안전']}
-                </Text>
-              </View>
-            )}
-            {counts['전문케어'] > 0 && (
-              <View style={[s.countBadge, {backgroundColor: STATE_COLORS.pro.bg}]}>
-                <Text style={[s.countText, {color: STATE_COLORS.pro.border}]}>
-                  전문케어 {counts['전문케어']}
-                </Text>
-              </View>
-            )}
-          </View>
-
-          {/* 세탁 항목 리스트 */}
-          <Text style={s.sectionTitle}>세탁 항목</Text>
-          {sortedLabels.map((label, idx) => {
-            const sym = SYMBOLS[label];
-            const state = statusToState(sym.status, sym.isPro);
-            const colors = STATE_COLORS[state];
-            const catLabel = CATEGORY_LABEL[sym.category] || sym.category;
-            return (
-              <View key={idx} style={[s.itemCard, {borderLeftColor: colors.border}]}>
-                <View style={s.itemHeader}>
-                  <Text style={s.itemCat}>{catLabel}</Text>
-                  <View style={[s.tagPill, {backgroundColor: colors.bg}]}>
-                    <Text style={[s.tagText, {color: colors.border}]}>{colors.tag}</Text>
-                  </View>
-                </View>
-                <Text style={s.itemTitle}>{sym.card}</Text>
-                <Text style={s.itemBody}>{sym.interp}</Text>
-                {sym.recommend && (
-                  <Text style={s.itemRecommend}>{sym.recommend}</Text>
-                )}
-                {sym.warning && (
-                  <Text style={[s.itemWarning, {color: colors.border}]}>{sym.warning}</Text>
-                )}
-              </View>
-            );
-          })}
-
-          {/* 주의 조합 경고 */}
-          {warnings.length > 0 && (
-            <>
-              <Text style={s.sectionTitle}>주의 사항</Text>
-              {warnings.map((w, idx) => {
-                const sevColor = w.severity === '심각도 높음'
-                  ? STATE_COLORS.forbidden.border
-                  : w.severity === '심각도 중간'
-                    ? STATE_COLORS.caution.border
-                    : '#6b7280';
-                return (
-                  <View key={idx} style={[s.warnCard, {borderLeftColor: sevColor}]}>
-                    <View style={s.warnHeader}>
-                      <Text style={[s.warnTitle, {color: sevColor}]}>
-                        조합 {w.code} · {w.title}
-                      </Text>
-                      <Text style={[s.warnSev, {color: sevColor}]}>{w.severity}</Text>
-                    </View>
-                    <Text style={s.warnBody}>{w.body}</Text>
-                  </View>
-                );
-              })}
-            </>
-          )}
-
-          {/* 전문 케어 안내 */}
-          {banners.length > 0 && (
-            <>
-              <Text style={s.sectionTitle}>전문 케어 안내</Text>
-              {banners.map((b, idx) => (
-                <View key={idx} style={[s.proCard, {borderLeftColor: STATE_COLORS.pro.border}]}>
-                  <Text style={s.proSubTitle}>{b.subTitle}</Text>
-                  <Text style={s.proBody}>{b.body}</Text>
-                  <Text style={s.proCards}>{b.cards.join(', ')}</Text>
-                </View>
-              ))}
-            </>
-          )}
-
-          {/* 추천 세탁 순서 */}
-          {steps.length > 0 && (
-            <>
-              <Text style={s.sectionTitle}>이렇게 빨아주세요</Text>
-              {steps.map((step, idx) => (
-                <View key={idx} style={s.stepRow}>
-                  <View style={s.stepNum}>
-                    <Text style={s.stepNumText}>{idx + 1}</Text>
-                  </View>
-                  <View style={s.stepContent}>
-                    <Text style={s.stepTitle}>{step.title}</Text>
-                    <Text style={s.stepBody}>{step.body}</Text>
-                  </View>
-                </View>
-              ))}
-            </>
-          )}
-
-          {/* 하단 버튼 */}
-          <View style={s.footerButtons}>
-            <TouchableOpacity style={s.btnSecondary} onPress={onRetake}>
-              <Text style={s.btnSecondaryText}>다시 찍기</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={s.btnPrimary} onPress={onBackToHome}>
-              <Text style={s.btnPrimaryText}>홈으로</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
       </SafeAreaView>
     );
   }
 
-  // ── 화면 1: 결과 요약 ──
-  const overallColors = STATE_COLORS[overallState];
+  // ── 에러 / 검출 없음 ──
+  if (error || detections.length === 0) {
+    return (
+      <SafeAreaView style={s.root}>
+        <Header onBack={onBackToHome} />
+        <View style={s.loadingWrap}>
+          <Text style={s.emptyEmoji}>🤔</Text>
+          <Text style={s.loadingText}>
+            {error || '세탁 기호를 찾지 못했어요'}
+          </Text>
+          <Text style={s.loadingSub}>다시 촬영해 주세요</Text>
+          <TouchableOpacity style={s.retakeBtn} onPress={onRetake} activeOpacity={0.85}>
+            <Text style={s.retakeBtnText}>다시 촬영</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
+  // ── 저장 모달 ──
+  if (showSave) {
+    return <SaveScreen labels={labels} onClose={() => setShowSave(false)} />;
+  }
+
+  // ── 정상 결과 ──
   return (
-    <SafeAreaView style={s.container}>
-      <ScrollView style={s.scroll} contentContainerStyle={s.scrollInner}>
-        {/* 상단 분석 결과 */}
-        <Text style={s.dimLabel}>분석 결과</Text>
+    <SafeAreaView style={s.root}>
+      <Header onBack={onBackToHome} />
 
-        <Text style={s.mainMent}>{msb.main}</Text>
+      {/* 탭 바 */}
+      <View style={s.tabBar}>
+        <TouchableOpacity
+          style={[s.tab, tab === 'result' && s.tabActive]}
+          onPress={() => setTab('result')}
+          activeOpacity={0.7}>
+          <Text style={[s.tabText, tab === 'result' && s.tabTextActive]}>결과</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[s.tab, tab === 'analysis' && s.tabActive]}
+          onPress={() => setTab('analysis')}
+          activeOpacity={0.7}>
+          <Text style={[s.tabText, tab === 'analysis' && s.tabTextActive]}>
+            분석 ({detections.length})
+          </Text>
+        </TouchableOpacity>
+      </View>
 
-        <Text style={s.dateInfo}>
-          {today} · 기호 {labels.length}개 인식
-        </Text>
+      {tab === 'result' ? (
+        <ScrollView style={s.scroll} contentContainerStyle={s.scrollInner}>
+          {caseType === 'C0' && <Case0View />}
+          {caseType === 'C1' && <Case1View labels={labels} />}
+          {caseType === 'C2' && <Case2View labels={labels} />}
+          {caseType === 'C3' && <Case3View labels={labels} />}
 
-        {/* 상태 뱃지 */}
-        {counts['금지'] > 0 && (
-          <View style={[s.statusBadge, {backgroundColor: STATE_COLORS.forbidden.bg}]}>
-            <View style={[s.statusDot, {backgroundColor: STATE_COLORS.forbidden.border}]} />
-            <Text style={[s.statusBadgeText, {color: STATE_COLORS.forbidden.border}]}>
-              금지 {counts['금지']}
-            </Text>
-          </View>
-        )}
-        {counts['금지'] === 0 && counts['주의'] > 0 && (
-          <View style={[s.statusBadge, {backgroundColor: STATE_COLORS.caution.bg}]}>
-            <View style={[s.statusDot, {backgroundColor: STATE_COLORS.caution.border}]} />
-            <Text style={[s.statusBadgeText, {color: STATE_COLORS.caution.border}]}>
-              주의 {counts['주의']}
-            </Text>
-          </View>
-        )}
-
-        {/* 서브 메시지 박스 */}
-        <View style={[s.msgBox, {borderLeftColor: overallColors.border}]}>
-          <Text style={s.msgBoxTitle}>{msb.sub}</Text>
-          <Text style={s.msgBoxBody}>{msb.body}</Text>
-        </View>
-
-        {/* 4 카드 그리드: 물세탁 / 표백 / 건조 / 다림질 */}
-        <View style={s.cardGrid}>
-          {(['세탁', '표백', '건조', '다림질'] as const).map(cat => {
-            const catLabel = CATEGORY_LABEL[cat];
-            const items = grouped[cat] || [];
-            let chosen: string | null = null;
-            let state: StateType = 'safe';
-
-            if (items.length > 0) {
-              const sorted = [...items].sort(
-                (a, b) =>
-                  (SYMBOLS[a] ? ({'금지': 0, '주의': 1, '안전': 2} as any)[SYMBOLS[a].status] : 9) -
-                  (SYMBOLS[b] ? ({'금지': 0, '주의': 1, '안전': 2} as any)[SYMBOLS[b].status] : 9),
-              );
-              chosen = sorted[0];
-              const sym = SYMBOLS[chosen];
-              state = statusToState(sym.status, sym.isPro);
-            }
-
-            const colors = STATE_COLORS[state];
-            const sym = chosen ? SYMBOLS[chosen] : null;
-
-            return (
-              <View key={cat} style={[s.categoryCard, {backgroundColor: colors.bg}]}>
-                <View style={[s.cardDot, {backgroundColor: colors.border}]} />
-                <Text style={s.cardCatLabel}>{catLabel}</Text>
-                <Text style={[s.cardValue, {color: colors.border}]}>
-                  {sym ? sym.value : '정보 없음'}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
-
-        {/* 전문 케어 배너 */}
-        {banners.map((b, idx) => (
-          <View key={idx} style={s.proBanner}>
-            <Text style={s.proBannerSub}>{b.subTitle}</Text>
-            <Text style={s.proBannerBody}>{b.body}</Text>
-          </View>
-        ))}
-
-        {/* 하단 버튼 */}
-        <View style={s.footerButtons}>
-          <TouchableOpacity style={s.btnSecondary} onPress={onRetake}>
-            <Text style={s.btnSecondaryText}>다시 찍기</Text>
+          <TouchableOpacity style={s.saveBtn} activeOpacity={0.85} onPress={handleSave}>
+            <Text style={s.saveBtnIcon}>🔖</Text>
+            <Text style={s.saveBtnText}>옷장에 저장</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={s.btnPrimary}
-            onPress={() => setView('detail')}>
-            <Text style={s.btnPrimaryText}>상세 보기</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
+        </ScrollView>
+      ) : (
+        <AnalysisView
+          imgUri={resizedUri || imageUri}
+          detections={detections}
+          inferenceMs={inferenceMs}
+          onRetake={onRetake}
+        />
+      )}
     </SafeAreaView>
   );
 }
 
-// ─── 스타일 ────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════
+// Header
+// ═══════════════════════════════════════════════════════════
+function Header({onBack}: {onBack: () => void}) {
+  return (
+    <View style={s.header}>
+      <TouchableOpacity style={s.backBtn} onPress={onBack} activeOpacity={0.6}>
+        <Text style={s.backBtnText}>‹</Text>
+      </TouchableOpacity>
+      <Text style={s.headerTitle}>인식 결과</Text>
+      <View style={s.backBtn} />
+    </View>
+  );
+}
 
+// ═══════════════════════════════════════════════════════════
+// 케이스 0 · 못 빨아요
+// ═══════════════════════════════════════════════════════════
+function Case0View() {
+  const c = buildCase0();
+  return (
+    <>
+      <View style={[s.diagCard, {backgroundColor: Colors.case0.bg}]}>
+        <Text style={s.diagIcon}>✕</Text>
+        <Text style={[s.diagLabel, {color: Colors.case0.text}]}>진단 결과</Text>
+        <Text style={[s.diagTitle, {color: Colors.case0.text}]}>{c.diagnostic}</Text>
+        <Text style={[s.diagSub, {color: Colors.case0.text}]}>{c.subline}</Text>
+      </View>
+
+      <Section title={c.reasonTitle}>
+        <Text style={s.bodyText}>{c.reasonBody}</Text>
+      </Section>
+
+      <Section title={c.stepsTitle}>
+        {c.steps.map((st, i) => (
+          <StepRow key={i} num={i + 1} title={st.title} body={st.body} />
+        ))}
+      </Section>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// 케이스 1 · 집에서
+// ═══════════════════════════════════════════════════════════
+function Case1View({labels}: {labels: string[]}) {
+  const c = buildCase1(labels);
+  return (
+    <>
+      <View style={[s.diagCard, {backgroundColor: Colors.case1.bgFrom}]}>
+        <Text style={s.diagIcon}>⌂</Text>
+        <Text style={[s.diagLabel, {color: Colors.case1.text}]}>진단 결과</Text>
+        <Text style={[s.diagTitle, {color: Colors.case1.text}]}>{c.diagnostic}</Text>
+        <Text style={[s.diagSub, {color: Colors.case1.text}]}>{c.subline}</Text>
+      </View>
+
+      <Section title={c.stepsTitle}>
+        {c.steps.map((st, i) => (
+          <StepRow
+            key={i}
+            num={i + 1}
+            title={st.title}
+            body={st.body}
+            highlight={st.highlight === 'red'}
+          />
+        ))}
+      </Section>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// 케이스 2 · 세탁소만
+// ═══════════════════════════════════════════════════════════
+function Case2View({labels}: {labels: string[]}) {
+  const c = buildCase2(labels);
+  return (
+    <>
+      <View style={[s.diagCard, {backgroundColor: Colors.case2.bg}]}>
+        <Text style={[s.diagIcon, {color: Colors.case2.text}]}>⌂</Text>
+        <Text style={[s.diagLabel, {color: Colors.case2.text, opacity: 0.85}]}>진단 결과</Text>
+        <Text style={[s.diagTitle, {color: Colors.case2.text}]}>{c.diagnostic}</Text>
+        <Text style={[s.diagSub, {color: Colors.case2.text, opacity: 0.9}]}>{c.subline}</Text>
+      </View>
+
+      {/* 경고 박스 */}
+      <View style={s.warnBox}>
+        <Text style={s.warnTitle}>{c.forbidTitle}</Text>
+        {c.forbids.map((f, i) => (
+          <Text key={i} style={s.warnItem}>• {f}</Text>
+        ))}
+      </View>
+
+      <LaundryGuideCard
+        title={c.guideTitle}
+        steps={c.guideSteps}
+        cost={c.estCost}
+        time={c.estTime}
+      />
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// 케이스 3 · 세탁 자유 (탭 전환)
+// ═══════════════════════════════════════════════════════════
+function Case3View({labels}: {labels: string[]}) {
+  const c = buildCase3(labels);
+  const [method, setMethod] = useState<1 | 2>(1);
+
+  return (
+    <>
+      <View style={[s.diagCard, {backgroundColor: Colors.case3.bgFrom}]}>
+        <Text style={[s.diagIcon, {color: Colors.case3.text}]}>⇄</Text>
+        <Text style={[s.diagLabel, {color: Colors.case3.text}]}>진단 결과</Text>
+        <Text style={[s.diagTitle, {color: Colors.case3.text}]}>{c.diagnostic}</Text>
+        <Text style={[s.diagSub, {color: Colors.case3.text}]}>{c.subline}</Text>
+
+        {/* 방법 1 / 방법 2 토글 */}
+        <View style={s.methodToggle}>
+          <TouchableOpacity
+            style={[s.methodPill, method === 1 && s.methodPillActive]}
+            onPress={() => setMethod(1)}
+            activeOpacity={0.7}>
+            <Text style={s.methodNum}>방법 1</Text>
+            <Text style={s.methodLabel}>집에서 빨기</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.methodPill, method === 2 && s.methodPillActive]}
+            onPress={() => setMethod(2)}
+            activeOpacity={0.7}>
+            <Text style={s.methodNum}>방법 2</Text>
+            <Text style={s.methodLabel}>세탁소에 맡기기</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {method === 1 ? (
+        <Section title={c.tabHome.stepsTitle}>
+          {c.tabHome.steps.map((st, i) => (
+            <StepRow
+              key={i}
+              num={i + 1}
+              title={st.title}
+              body={st.body}
+              highlight={st.highlight === 'red'}
+            />
+          ))}
+        </Section>
+      ) : (
+        <LaundryGuideCard
+          title={c.tabLaundry.guideTitle}
+          steps={c.tabLaundry.guideSteps}
+          cost={c.tabLaundry.estCost}
+          time={c.tabLaundry.estTime}
+        />
+      )}
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// 분석 탭 (이전 ModelDebugScreen 내용)
+// ═══════════════════════════════════════════════════════════
+function AnalysisView({
+  imgUri,
+  detections,
+  inferenceMs,
+  onRetake,
+}: {
+  imgUri: string;
+  detections: DetectionResult[];
+  inferenceMs: number | null;
+  onRetake: () => void;
+}) {
+  return (
+    <ScrollView style={s.scroll} contentContainerStyle={s.scrollInner}>
+      <View style={s.analysisImgBox}>
+        <Image source={{uri: imgUri}} style={s.analysisImg} resizeMode="contain" />
+        {detections.map((d, i) => {
+          if (!d.bbox || d.bbox.length < 4) return null;
+          const scale = ANALYSIS_IMG_SIZE / MODEL_INPUT_SIZE;
+          const x = d.bbox[0] * scale;
+          const y = d.bbox[1] * scale;
+          const w = (d.bbox[2] - d.bbox[0]) * scale;
+          const h = (d.bbox[3] - d.bbox[1]) * scale;
+          const color = BBOX_PALETTE[d.classId % BBOX_PALETTE.length];
+          return (
+            <React.Fragment key={i}>
+              <View style={[s.bbox, {left: x, top: y, width: w, height: h, borderColor: color}]} />
+              <View style={[s.bboxTag, {left: x, top: Math.max(0, y - 18), backgroundColor: color}]}>
+                <Text style={s.bboxTagText}>{d.label}</Text>
+              </View>
+            </React.Fragment>
+          );
+        })}
+      </View>
+
+      <View style={s.analysisMeta}>
+        <Text style={s.analysisMetaItem}>
+          기호 <Text style={s.analysisMetaStrong}>{detections.length}개</Text> 인식
+        </Text>
+        {inferenceMs !== null && (
+          <Text style={s.analysisMetaItem}>
+            추론 <Text style={s.analysisMetaStrong}>{inferenceMs}ms</Text>
+          </Text>
+        )}
+      </View>
+
+      <Section title="검출된 기호">
+        {detections.map((d, i) => (
+          <View key={i} style={s.detRow}>
+            <View style={[s.detDot, {backgroundColor: BBOX_PALETTE[d.classId % BBOX_PALETTE.length]}]} />
+            <Text style={s.detLabel}>{d.label}</Text>
+            <Text style={s.detConf}>{(d.confidence * 100).toFixed(1)}%</Text>
+          </View>
+        ))}
+      </Section>
+
+      <TouchableOpacity style={s.retakeBtnAlt} onPress={onRetake} activeOpacity={0.85}>
+        <Text style={s.retakeBtnAltText}>다시 촬영</Text>
+      </TouchableOpacity>
+    </ScrollView>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// 공통 컴포넌트
+// ═══════════════════════════════════════════════════════════
+function Section({title, children}: {title: string; children: React.ReactNode}) {
+  return (
+    <View style={s.section}>
+      <View style={s.sectionHeader}>
+        <Text style={s.sectionMark}>≡</Text>
+        <Text style={s.sectionTitle}>{title}</Text>
+      </View>
+      {children}
+    </View>
+  );
+}
+
+function StepRow({
+  num,
+  title,
+  body,
+  highlight,
+}: {
+  num: number;
+  title: string;
+  body: string;
+  highlight?: boolean;
+}) {
+  return (
+    <View style={s.stepRow}>
+      <View style={s.stepNum}>
+        <Text style={s.stepNumText}>{num}</Text>
+      </View>
+      <View style={s.stepText}>
+        <Text style={[s.stepTitle, highlight && s.stepTitleHi]}>{title}</Text>
+        {body ? <Text style={[s.stepBody, highlight && s.stepBodyHi]}>{body}</Text> : null}
+      </View>
+    </View>
+  );
+}
+
+function LaundryGuideCard({
+  title,
+  steps,
+  cost,
+  time,
+}: {
+  title: string;
+  steps: Case2Content['guideSteps'];
+  cost: string;
+  time: string;
+}) {
+  return (
+    <>
+      <Section title={title}>
+        {steps.map((st, i) => (
+          <View key={i} style={s.stepRow}>
+            <View style={s.stepNum}>
+              <Text style={s.stepNumText}>{i + 1}</Text>
+            </View>
+            <View style={s.stepText}>
+              <Text style={s.stepTitle}>{st.title}</Text>
+              {st.body ? <Text style={s.stepBody}>{st.body}</Text> : null}
+              {st.quote && (
+                <View style={s.quoteBox}>
+                  <Text style={s.quoteText}>"{st.quote}"</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        ))}
+      </Section>
+
+      <View style={s.estBox}>
+        <View style={s.estCol}>
+          <Text style={s.estLabel}>예상 비용</Text>
+          <Text style={s.estValue}>{cost}</Text>
+        </View>
+        <View style={s.estDivider} />
+        <View style={s.estCol}>
+          <Text style={s.estLabel}>소요 기간</Text>
+          <Text style={s.estValue}>{time}</Text>
+        </View>
+      </View>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// 스타일
+// ═══════════════════════════════════════════════════════════
 const s = StyleSheet.create({
-  container: {flex: 1, backgroundColor: '#fafafa'},
-  scroll: {flex: 1},
-  scrollInner: {padding: 22, paddingBottom: 40},
+  root: {flex: 1, backgroundColor: Colors.bg},
 
-  // 헤더 (상세)
+  // 헤더
   header: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 18, paddingVertical: 14,
-    backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#eee',
+    height: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.sm,
+    backgroundColor: Colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
-  backArrow: {paddingRight: 12},
-  backArrowText: {fontSize: 22, color: '#333', fontWeight: '600'},
-  headerTitle: {fontSize: 17, fontWeight: '700', color: '#1a1614', letterSpacing: -0.3},
+  backBtn: {width: 44, height: 44, alignItems: 'center', justifyContent: 'center'},
+  backBtnText: {fontSize: 28, color: Colors.textPrimary, marginTop: -4},
+  headerTitle: {...Typography.titleMd, color: Colors.textPrimary},
 
-  // 요약 상단
-  dimLabel: {fontSize: 13, color: '#999', marginBottom: 6},
-  mainMent: {fontSize: 26, fontWeight: '800', color: '#1a1614', letterSpacing: -0.5, marginBottom: 6},
-  dateInfo: {fontSize: 12, color: '#999', marginBottom: 14},
-
-  statusBadge: {
-    alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, marginBottom: 16,
+  // 탭 바
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: Colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
-  statusDot: {width: 8, height: 8, borderRadius: 4, marginRight: 6},
-  statusBadgeText: {fontSize: 13, fontWeight: '600'},
-
-  // 서브 메시지 박스
-  msgBox: {
-    backgroundColor: '#fff', borderRadius: 14, padding: 18,
-    borderLeftWidth: 4, marginBottom: 20,
-    elevation: 1, shadowColor: '#000', shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.08, shadowRadius: 2,
+  tab: {
+    flex: 1,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
   },
-  msgBoxTitle: {fontSize: 15, fontWeight: '700', color: '#1a1614', marginBottom: 6},
-  msgBoxBody: {fontSize: 13, color: '#555', lineHeight: 20},
+  tabActive: {borderBottomColor: Colors.textPrimary},
+  tabText: {...Typography.body, color: Colors.textMuted, fontWeight: '600'},
+  tabTextActive: {color: Colors.textPrimary, fontWeight: '700'},
 
-  // 4 카드 그리드
-  cardGrid: {
-    flexDirection: 'row', flexWrap: 'wrap',
-    gap: 10, marginBottom: 18,
-  },
-  categoryCard: {
-    width: '48%' as any, borderRadius: 14, padding: 16, minHeight: 100,
-    flexGrow: 1, flexBasis: '46%',
-  },
-  cardDot: {width: 10, height: 10, borderRadius: 5, marginBottom: 12, alignSelf: 'flex-end'},
-  cardCatLabel: {fontSize: 12, color: '#777', marginBottom: 4},
-  cardValue: {fontSize: 15, fontWeight: '700'},
+  scroll: {flex: 1},
+  scrollInner: {padding: Spacing.lg, paddingBottom: Spacing.xxl},
 
-  // 전문케어 배너
-  proBanner: {
-    backgroundColor: '#2e4a73', borderRadius: 14, padding: 18, marginBottom: 18,
+  // ── 로딩 / 에러 ──
+  loadingWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.lg,
   },
-  proBannerSub: {fontSize: 14, fontWeight: '700', color: '#fff', marginBottom: 6},
-  proBannerBody: {fontSize: 13, color: '#cdd8e6', lineHeight: 20},
-
-  // 하단 버튼
-  footerButtons: {flexDirection: 'row', gap: 12, marginTop: 10},
-  btnSecondary: {
-    flex: 1, paddingVertical: 16, borderRadius: 12,
-    borderWidth: 2, borderColor: '#7C3AED', alignItems: 'center',
+  loadingText: {
+    ...Typography.titleMd,
+    color: Colors.textPrimary,
+    marginTop: Spacing.lg,
   },
-  btnSecondaryText: {color: '#7C3AED', fontSize: 15, fontWeight: '600'},
-  btnPrimary: {
-    flex: 1, paddingVertical: 16, borderRadius: 12,
-    backgroundColor: '#7C3AED', alignItems: 'center',
+  loadingSub: {
+    ...Typography.body,
+    color: Colors.textMuted,
+    marginTop: Spacing.xs,
   },
-  btnPrimaryText: {color: '#fff', fontSize: 15, fontWeight: '600'},
+  emptyEmoji: {fontSize: 56, marginBottom: Spacing.sm},
+  retakeBtn: {
+    marginTop: Spacing.xl,
+    backgroundColor: Colors.ctaBlack,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: 14,
+    borderRadius: Radius.md,
+  },
+  retakeBtnText: {color: Colors.surface, ...Typography.button},
 
-  // ── 상세 가이드 ──
-  countRow: {flexDirection: 'row', gap: 8, marginBottom: 18, flexWrap: 'wrap'},
-  countBadge: {paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999},
-  countText: {fontSize: 12, fontWeight: '600'},
-
-  sectionTitle: {
-    fontSize: 17, fontWeight: '700', color: '#1a1614',
-    marginBottom: 12, marginTop: 8, letterSpacing: -0.3,
+  // ── 진단 카드 ──
+  diagCard: {
+    borderRadius: Radius.lg,
+    padding: Spacing.lg,
+    marginBottom: Spacing.md,
+  },
+  diagIcon: {fontSize: 26, color: Colors.textPrimary, marginBottom: 6},
+  diagLabel: {
+    ...Typography.bodyBold,
+    fontSize: 15,
+    marginBottom: 6,
+  },
+  diagTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: -0.4,
+    marginBottom: 6,
+  },
+  diagSub: {
+    ...Typography.body,
+    fontSize: 13,
   },
 
-  // 항목 카드
-  itemCard: {
-    backgroundColor: '#fff', borderRadius: 14, padding: 16,
-    marginBottom: 10, borderLeftWidth: 4,
-    elevation: 1, shadowColor: '#000', shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.06, shadowRadius: 2,
+  // ── 경고 박스 (case 2) ──
+  warnBox: {
+    backgroundColor: Colors.warningBg,
+    borderRadius: Radius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
   },
-  itemHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6},
-  itemCat: {fontSize: 12, color: '#999'},
-  tagPill: {paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999},
-  tagText: {fontSize: 11, fontWeight: '600'},
-  itemTitle: {fontSize: 15, fontWeight: '700', color: '#1a1614', marginBottom: 6},
-  itemBody: {fontSize: 13, color: '#555', lineHeight: 20, marginBottom: 4},
-  itemRecommend: {fontSize: 13, color: '#333', lineHeight: 20, marginBottom: 4},
-  itemWarning: {fontSize: 13, fontWeight: '500', lineHeight: 20},
-
-  // 주의 조합
-  warnCard: {
-    backgroundColor: '#fff', borderRadius: 14, padding: 16,
-    marginBottom: 10, borderLeftWidth: 4,
-    elevation: 1, shadowColor: '#000', shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.06, shadowRadius: 2,
+  warnTitle: {
+    ...Typography.bodyBold,
+    color: Colors.warningText,
+    marginBottom: 6,
   },
-  warnHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6},
-  warnTitle: {fontSize: 14, fontWeight: '700', flex: 1},
-  warnSev: {fontSize: 11, fontWeight: '600'},
-  warnBody: {fontSize: 13, color: '#555', lineHeight: 20},
-
-  // 전문 케어 카드 (상세)
-  proCard: {
-    backgroundColor: '#fff', borderRadius: 14, padding: 16,
-    marginBottom: 10, borderLeftWidth: 4,
-    elevation: 1, shadowColor: '#000', shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.06, shadowRadius: 2,
+  warnItem: {
+    ...Typography.body,
+    color: Colors.warningText,
+    marginBottom: 2,
   },
-  proSubTitle: {fontSize: 15, fontWeight: '700', color: '#2e4a73', marginBottom: 6},
-  proBody: {fontSize: 13, color: '#555', lineHeight: 20, marginBottom: 4},
-  proCards: {fontSize: 12, color: '#999'},
 
-  // 추천 세탁 순서
-  stepRow: {flexDirection: 'row', marginBottom: 14},
+  // ── 방법 토글 (case 3) ──
+  methodToggle: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginTop: Spacing.md,
+  },
+  methodPill: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.55)',
+    borderRadius: Radius.pill,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  methodPillActive: {
+    backgroundColor: Colors.case3.textSub,
+  },
+  methodNum: {fontSize: 10, fontWeight: '700', color: Colors.case3.text},
+  methodLabel: {fontSize: 12, fontWeight: '700', color: Colors.case3.text},
+
+  // ── 섹션 ──
+  section: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  sectionMark: {
+    fontSize: 18,
+    color: Colors.textPrimary,
+    marginRight: 6,
+  },
+  sectionTitle: {...Typography.bodyBold, color: Colors.textPrimary},
+
+  bodyText: {...Typography.body, color: Colors.textSecondary},
+
+  // ── 단계 ──
+  stepRow: {flexDirection: 'row', marginBottom: Spacing.sm},
   stepNum: {
-    width: 28, height: 28, borderRadius: 14,
-    backgroundColor: '#2d8d6f', alignItems: 'center', justifyContent: 'center',
-    marginRight: 12, marginTop: 2,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: Colors.case1.bgTo,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.sm,
+    marginTop: 1,
   },
-  stepNumText: {color: '#fff', fontSize: 13, fontWeight: '700'},
-  stepContent: {flex: 1},
-  stepTitle: {fontSize: 14, fontWeight: '700', color: '#1a1614', marginBottom: 4},
-  stepBody: {fontSize: 13, color: '#555', lineHeight: 20},
+  stepNumText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.case1.text,
+  },
+  stepText: {flex: 1},
+  stepTitle: {
+    ...Typography.bodyBold,
+    color: Colors.textPrimary,
+    fontSize: 14,
+  },
+  stepBody: {...Typography.caption, color: Colors.textSecondary, marginTop: 2},
+  stepTitleHi: {color: Colors.warningStrong},
+  stepBodyHi: {color: Colors.warningStrong},
+
+  // ── 인용구 (case 2) ──
+  quoteBox: {
+    backgroundColor: Colors.chipPro.bg,
+    borderRadius: Radius.md,
+    padding: Spacing.sm,
+    marginTop: 6,
+    alignItems: 'center',
+  },
+  quoteText: {
+    ...Typography.bodyBold,
+    color: Colors.chipPro.text,
+    fontSize: 13,
+  },
+
+  // ── 비용/시간 ──
+  estBox: {
+    flexDirection: 'row',
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  estCol: {flex: 1},
+  estDivider: {width: 1, backgroundColor: Colors.border, marginHorizontal: Spacing.sm},
+  estLabel: {...Typography.caption, color: Colors.textMuted, marginBottom: 4},
+  estValue: {...Typography.bodyBold, color: Colors.textPrimary},
+
+  // ── 저장 버튼 ──
+  saveBtn: {
+    flexDirection: 'row',
+    backgroundColor: Colors.ctaBlack,
+    borderRadius: Radius.pill,
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: Spacing.md,
+  },
+  saveBtnIcon: {fontSize: 18, color: Colors.surface, marginRight: 8},
+  saveBtnText: {...Typography.button, color: Colors.surface},
+
+  // ── 분석 탭 ──
+  analysisImgBox: {
+    width: ANALYSIS_IMG_SIZE,
+    height: ANALYSIS_IMG_SIZE,
+    backgroundColor: '#000',
+    borderRadius: Radius.md,
+    overflow: 'hidden',
+    alignSelf: 'center',
+    marginBottom: Spacing.md,
+  },
+  analysisImg: {width: '100%', height: '100%'},
+  bbox: {position: 'absolute', borderWidth: 2},
+  bboxTag: {
+    position: 'absolute',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 3,
+  },
+  bboxTagText: {color: '#fff', fontSize: 10, fontWeight: '700'},
+
+  analysisMeta: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  analysisMetaItem: {...Typography.caption, color: Colors.textMuted},
+  analysisMetaStrong: {color: Colors.textPrimary, fontWeight: '700'},
+
+  detRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  detDot: {width: 10, height: 10, borderRadius: 5, marginRight: Spacing.sm},
+  detLabel: {flex: 1, ...Typography.body, color: Colors.textPrimary, fontSize: 13},
+  detConf: {...Typography.bodyBold, color: Colors.ctaGreen},
+
+  retakeBtnAlt: {
+    marginTop: Spacing.md,
+    paddingVertical: 14,
+    borderRadius: Radius.md,
+    borderWidth: 1.5,
+    borderColor: Colors.borderStrong,
+    alignItems: 'center',
+  },
+  retakeBtnAltText: {...Typography.button, color: Colors.textPrimary},
 });

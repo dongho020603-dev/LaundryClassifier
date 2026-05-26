@@ -5,57 +5,78 @@ import {
   TouchableOpacity,
   StyleSheet,
   SafeAreaView,
-  Alert,
 } from 'react-native';
-import {launchImageLibrary} from 'react-native-image-picker';
+import {Colors, Radius, Spacing, Typography, Shadow} from '../theme/tokens';
 
 interface HomeScreenProps {
-  onImageSelected: (uri: string) => void;
   onOpenCamera: () => void;
+  onOpenWarehouse: () => void;
 }
 
-export default function HomeScreen({onImageSelected, onOpenCamera}: HomeScreenProps) {
-  const handleCamera = () => {
-    onOpenCamera();
-  };
+const FEATURES = [
+  {
+    icon: '📷',
+    title: '라벨 인식',
+    sub: '38개 세탁 기호 자동 분석',
+  },
+  {
+    icon: '🧺',
+    title: '빨래법 안내',
+    sub: '1·4단계로 정리된 가이드',
+  },
+  {
+    icon: '👕',
+    title: '옷장 보관',
+    sub: '내 옷의 세탁법을 저장',
+  },
+];
 
-  const handleGallery = () => {
-    launchImageLibrary(
-      {
-        mediaType: 'photo',
-        quality: 0.8,
-      },
-      response => {
-        if (response.didCancel) {
-          console.log('User cancelled gallery');
-        } else if (response.errorCode) {
-          Alert.alert('Error', response.errorMessage || 'Gallery error');
-        } else if (response.assets && response.assets[0]) {
-          onImageSelected(response.assets[0].uri!);
-        }
-      },
-    );
-  };
-
+export default function HomeScreen({
+  onOpenCamera,
+  onOpenWarehouse,
+}: HomeScreenProps) {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
-        <Text style={styles.title}>세탁 기호 분류기</Text>
-        <Text style={styles.subtitle}>
-          세탁 라벨을 촬영하거나 갤러리에서 선택하세요
-        </Text>
+        {/* 로고 + 타이틀 */}
+        <View style={styles.heroBlock}>
+          <View style={styles.logoBox}>
+            <Text style={styles.logoIcon}>▢</Text>
+          </View>
+          <Text style={styles.title}>빨래해</Text>
+          <Text style={styles.tagline}>
+            세탁 라벨을 비추면{'\n'}어떻게 빨아야 할지 알려드려요
+          </Text>
+        </View>
 
-        <View style={styles.buttonContainer}>
+        {/* 핵심 기능 3개 */}
+        <View style={styles.featureList}>
+          {FEATURES.map((f, i) => (
+            <View key={i} style={styles.featureRow}>
+              <Text style={styles.featureIcon}>{f.icon}</Text>
+              <View style={styles.featureText}>
+                <Text style={styles.featureTitle}>{f.title}</Text>
+                <Text style={styles.featureSub}>{f.sub}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+
+        {/* CTA */}
+        <View style={styles.ctaBlock}>
           <TouchableOpacity
-            style={[styles.button, styles.cameraButton]}
-            onPress={handleCamera}>
-            <Text style={styles.buttonText}>📷 카메라로 촬영</Text>
+            style={[styles.btn, styles.btnPrimary]}
+            activeOpacity={0.85}
+            onPress={onOpenCamera}>
+            <Text style={styles.btnPrimaryIcon}>📷</Text>
+            <Text style={styles.btnPrimaryText}>라벨 촬영하기</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.button, styles.galleryButton]}
-            onPress={handleGallery}>
-            <Text style={styles.buttonText}>🖼️ 갤러리에서 선택</Text>
+            style={[styles.btn, styles.btnSecondary]}
+            activeOpacity={0.85}
+            onPress={onOpenWarehouse}>
+            <Text style={styles.btnSecondaryText}>내 옷장 보기</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -64,57 +85,78 @@ export default function HomeScreen({onImageSelected, onOpenCamera}: HomeScreenPr
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
+  container: {flex: 1, backgroundColor: Colors.surface},
   content: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.xxl,
+    paddingBottom: Spacing.lg,
+    justifyContent: 'space-between',
   },
+
+  // 로고 영역
+  heroBlock: {alignItems: 'center', marginTop: Spacing.xl},
+  logoBox: {
+    width: 88,
+    height: 88,
+    borderRadius: Radius.lg,
+    borderWidth: 2.5,
+    borderColor: Colors.textPrimary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.lg,
+  },
+  logoIcon: {fontSize: 48, color: Colors.textPrimary, marginTop: -4},
   title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#222',
-    marginBottom: 12,
-    letterSpacing: -0.5,
+    ...Typography.titleXl,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.sm,
   },
-  subtitle: {
-    fontSize: 13,
-    fontWeight: '400',
-    color: '#888',
+  tagline: {
+    ...Typography.body,
+    color: Colors.textMuted,
     textAlign: 'center',
-    marginBottom: 50,
-    letterSpacing: 0.2,
-    lineHeight: 20,
+    lineHeight: 22,
   },
-  buttonContainer: {
-    width: '100%',
-    gap: 20,
+
+  // 기능 리스트
+  featureList: {gap: Spacing.lg, paddingHorizontal: Spacing.md},
+  featureRow: {flexDirection: 'row', alignItems: 'center'},
+  featureIcon: {fontSize: 26, marginRight: Spacing.md, width: 32, textAlign: 'center'},
+  featureText: {flex: 1},
+  featureTitle: {
+    ...Typography.bodyBold,
+    color: Colors.textPrimary,
+    marginBottom: 2,
   },
-  button: {
-    width: '100%',
-    paddingVertical: 18,
-    borderRadius: 12,
+  featureSub: {
+    ...Typography.caption,
+    color: Colors.textMuted,
+  },
+
+  // CTA
+  ctaBlock: {gap: Spacing.sm},
+  btn: {
+    height: 56,
+    borderRadius: Radius.md,
     alignItems: 'center',
     justifyContent: 'center',
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
+    flexDirection: 'row',
   },
-  cameraButton: {
-    backgroundColor: '#4CAF50',
+  btnPrimary: {
+    backgroundColor: Colors.ctaGreen,
+    ...Shadow.cta,
   },
-  galleryButton: {
-    backgroundColor: '#2196F3',
+  btnPrimaryIcon: {fontSize: 18, marginRight: 8},
+  btnPrimaryText: {
+    ...Typography.button,
+    color: Colors.surface,
   },
-  buttonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '600',
+  btnSecondary: {
+    backgroundColor: Colors.ctaBlue,
+  },
+  btnSecondaryText: {
+    ...Typography.button,
+    color: Colors.surface,
   },
 });
