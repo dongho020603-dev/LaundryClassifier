@@ -2,105 +2,66 @@ import React, {useState} from 'react';
 import {StatusBar} from 'react-native';
 import HomeScreen from './screens/HomeScreen';
 import CameraScreen from './screens/CameraScreen';
-import ModelDebugScreen from './screens/ModelDebugScreen';
 import ResultScreen from './screens/ResultScreen';
+import WarehouseScreen from './screens/WarehouseScreen';
+import {Colors} from './theme/tokens';
 
-type Screen = 'home' | 'camera' | 'modelDebug' | 'result';
-
-interface DetectionResult {
-  label: string;
-  confidence: number;
-  classId: number;
-}
+type Screen = 'home' | 'camera' | 'result' | 'warehouse';
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('home');
   const [selectedImageUri, setSelectedImageUri] = useState<string>('');
-  const [resizedImageUri, setResizedImageUri] = useState<string>('');
-  const [detections, setDetections] = useState<DetectionResult[]>([]);
 
-  const handleOpenCamera = () => {
-    setCurrentScreen('camera');
-  };
+  const handleOpenCamera = () => setCurrentScreen('camera');
+  const handleOpenWarehouse = () => setCurrentScreen('warehouse');
+  const handleCloseCamera = () => setCurrentScreen('home');
 
   const handlePhotoTaken = (uri: string) => {
-    // vision-camera는 file:// 없이 경로를 반환하므로 추가
-    const fullUri = uri.startsWith('file://') ? uri : `file://${uri}`;
-    setSelectedImageUri(fullUri);
-    setCurrentScreen('modelDebug');
+    const full = uri.startsWith('file://') ? uri : `file://${uri}`;
+    setSelectedImageUri(full);
+    setCurrentScreen('result');
   };
 
   const handleImageSelected = (uri: string) => {
     setSelectedImageUri(uri);
-    setCurrentScreen('modelDebug');
-  };
-
-  const handleResizedImageReady = (uri: string) => {
-    setResizedImageUri(uri);
-  };
-
-  const handleContinueToResult = (dets?: DetectionResult[]) => {
-    if (dets) {
-      setDetections(dets);
-    }
     setCurrentScreen('result');
   };
 
-  const handleRetakeFromDebug = () => {
-    setCurrentScreen('home');
-    setSelectedImageUri('');
-    setDetections([]);
-  };
-
-  const handleRetakeFromResult = () => {
-    setCurrentScreen('home');
-    setSelectedImageUri('');
-    setDetections([]);
-  };
-
   const handleBackToHome = () => {
-    setCurrentScreen('home');
     setSelectedImageUri('');
-    setDetections([]);
+    setCurrentScreen('home');
   };
 
-  const handleCloseCamera = () => {
-    setCurrentScreen('home');
+  const handleRetake = () => {
+    setSelectedImageUri('');
+    setCurrentScreen('camera');
   };
 
   return (
     <>
-      <StatusBar
-        barStyle={currentScreen === 'camera' ? 'light-content' : 'dark-content'}
-        backgroundColor={currentScreen === 'camera' ? '#000' : '#fafafa'}
-      />
+      <StatusBar barStyle="dark-content" backgroundColor={Colors.bg} />
       {currentScreen === 'home' && (
         <HomeScreen
-          onImageSelected={handleImageSelected}
           onOpenCamera={handleOpenCamera}
+          onOpenWarehouse={handleOpenWarehouse}
         />
       )}
       {currentScreen === 'camera' && (
         <CameraScreen
           onPhotoTaken={handlePhotoTaken}
+          onImageSelected={handleImageSelected}
           onClose={handleCloseCamera}
-        />
-      )}
-      {currentScreen === 'modelDebug' && (
-        <ModelDebugScreen
-          imageUri={selectedImageUri}
-          onContinue={handleContinueToResult}
-          onRetake={handleRetakeFromDebug}
-          onResizedImageReady={handleResizedImageReady}
         />
       )}
       {currentScreen === 'result' && (
         <ResultScreen
-          imageUri={resizedImageUri || selectedImageUri}
-          detections={detections}
+          imageUri={selectedImageUri}
           onBackToHome={handleBackToHome}
-          onRetake={handleRetakeFromResult}
+          onRetake={handleRetake}
         />
+      )}
+      {currentScreen === 'warehouse' && (
+        <WarehouseScreen onBack={handleBackToHome} />
       )}
     </>
   );

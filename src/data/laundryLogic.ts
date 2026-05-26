@@ -444,3 +444,180 @@ export function getOverallState(counts: StatusCounts): StateType {
   if (counts['주의'] > 0) return 'caution';
   return 'safe';
 }
+
+// ═══════════════════════════════════════════════════════════
+// v4 Final · 3+1 케이스 분류 모델 (PDF v4 매뉴얼 기준)
+// ═══════════════════════════════════════════════════════════
+
+export type CaseType = 'C0' | 'C1' | 'C2' | 'C3';
+
+const DRY_CLEAN_OK_LABELS = [
+  'dry_clean_perc_normal',
+  'dry_clean_perc_mild',
+  'dry_clean_hc_normal',
+  'dry_clean_hc_mild',
+];
+const WET_CLEAN_OK_LABELS = [
+  'wet_clean_normal',
+  'wet_clean_mild',
+  'wet_clean_very_mild',
+];
+
+export function classifyCase(detected: string[]): CaseType {
+  const s = new Set(detected);
+  const washForbidden = s.has('do_not_wash');
+  const dryForbidden = s.has('do_not_dry_clean');
+  const wetForbidden = s.has('do_not_wet_clean');
+  const hasDryOk = DRY_CLEAN_OK_LABELS.some(l => s.has(l));
+  const hasWetOk = WET_CLEAN_OK_LABELS.some(l => s.has(l));
+
+  // 1. 모두 금지 → C0
+  if (washForbidden && dryForbidden && wetForbidden) return 'C0';
+  // 2. 물세탁 금지 + 전문케어 가능 → C2
+  if (washForbidden && (hasDryOk || hasWetOk)) return 'C2';
+  // 3. 물세탁 가능 + 전문케어 가능 → C3
+  if (!washForbidden && (hasDryOk || hasWetOk)) return 'C3';
+  // 4. 그 외 (물세탁 가능, 전문케어 없거나 금지) → C1
+  return 'C1';
+}
+
+// ─── 케이스 0 · 못 빨아요 ─────────────────────────────────
+
+export interface Case0Content {
+  diagnostic: string;
+  subline: string;
+  reasonTitle: string;
+  reasonBody: string;
+  stepsTitle: string;
+  steps: { title: string; body: string }[];
+}
+
+export function buildCase0(): Case0Content {
+  return {
+    diagnostic: '이 옷은 빨 수 없어요',
+    subline: '겉면을 살살 닦아만 주세요',
+    reasonTitle: '왜 빨 수 없나요?',
+    reasonBody:
+      '물세탁, 드라이클리닝, 웨트클리닝 모두 금지 표시가 있어요.\n어떤 방법을 써도 옷을 망가뜨리니까 빨지 않는 게 유일한 답이에요.',
+    stepsTitle: '이렇게 관리하세요',
+    steps: [
+      { title: '표면 닦아내기', body: '부드러운 천으로 표면 먼지를 살살 닦아내세요' },
+      { title: '보관 환경', body: '통풍이 잘 되는 곳에 보관하세요' },
+      { title: '커버 주의', body: '비닐 커버는 피하세요 (곰팡이 위험)' },
+    ],
+  };
+}
+
+// ─── 케이스 1 · 집에서 ────────────────────────────────────
+
+export interface Case1Content {
+  diagnostic: string;
+  subline: string;
+  stepsTitle: string;
+  steps: { title: string; body: string; highlight?: 'red' }[];
+}
+
+export function buildCase1(detected: string[]): Case1Content {
+  const baseSteps = buildSteps(detected);
+  const s = new Set(detected);
+
+  const styled: Case1Content['steps'] = baseSteps.map(st => {
+    const isForbidden =
+      (st.title === '세제와 표백제' && s.has('do_not_bleach')) ||
+      (st.title === '말리기' && s.has('do_not_tumble_dry'));
+    return isForbidden ? { ...st, highlight: 'red' as const } : st;
+  });
+
+  return {
+    diagnostic: '집에서 빨아도 되는 옷이에요',
+    subline: '표시된 조건만 맞춰서 평소처럼 빨면 돼요',
+    stepsTitle: '이렇게 빨아주세요',
+    steps: styled,
+  };
+}
+
+// ─── 케이스 2 · 세탁소만 ──────────────────────────────────
+
+export interface Case2Content {
+  diagnostic: string;
+  subline: string;
+  forbidTitle: string;
+  forbids: string[];
+  guideTitle: string;
+  guideSteps: { title: string; body: string; quote?: string }[];
+  estCost: string;
+  estTime: string;
+}
+
+function pickLaundryQuote(detected: string[]): string {
+  const s = new Set(detected);
+  if (s.has('dry_clean_perc_mild')) return '섬세 드라이클리닝으로 약하게 해주세요';
+  if (s.has('dry_clean_perc_normal')) return '드라이클리닝 해주세요';
+  if (s.has('dry_clean_hc_mild')) return 'F 표시예요. 탄화수소계 용제로 약하게 해주세요';
+  if (s.has('dry_clean_hc_normal')) return 'F 표시예요. 탄화수소계 용제로 해주세요';
+  if (s.has('wet_clean_very_mild') || s.has('wet_clean_mild')) return '웨트클리닝으로 약하게 해주세요';
+  if (s.has('wet_clean_normal')) return '웨트클리닝 가능한가요? 해주세요';
+  return '드라이클리닝 해주세요';
+}
+
+export function buildCase2(detected: string[]): Case2Content {
+  return {
+    diagnostic: '세탁소에서 맡겨야 하는 옷이에요',
+    subline: '집에서 빨면 옷이 망가질 수 있어요',
+    forbidTitle: '절대 하면 안 돼요',
+    forbids: [
+      '세탁기에 넣지 마세요',
+      '손빨래도 금지 (물 자체가 옷을 망가뜨려요)',
+      '표백제 사용 금지',
+    ],
+    guideTitle: '세탁기에 이렇게 맡기세요',
+    guideSteps: [
+      {
+        title: '동네 세탁소로 가져가기',
+        body: '일반 드라이클리닝 가능한 곳이면 OK',
+      },
+      {
+        title: '이렇게 말해주세요',
+        body: '',
+        quote: pickLaundryQuote(detected),
+      },
+      {
+        title: '불안하면 라벨 보여주기',
+        body: '라벨 P 표시를 보여주세요',
+      },
+    ],
+    estCost: '5,000~12,000원',
+    estTime: '2~3일',
+  };
+}
+
+// ─── 케이스 3 · 세탁 자유 (탭 전환) ───────────────────────
+
+export interface Case3Content {
+  diagnostic: string;
+  subline: string;
+  tabHome: Case1Content;       // 방법 1 : 집에서 빨기
+  tabLaundry: {                // 방법 2 : 세탁소에 맡기기
+    guideTitle: string;
+    guideSteps: Case2Content['guideSteps'];
+    estCost: string;
+    estTime: string;
+  };
+}
+
+export function buildCase3(detected: string[]): Case3Content {
+  const home = buildCase1(detected);
+  const laundry = buildCase2(detected);
+  return {
+    diagnostic: '집에서 빨아도 되는 옷이에요',
+    subline: '집에서 빨거나, 세탁소에 맡겨도 돼요.',
+    tabHome: home,
+    tabLaundry: {
+      guideTitle: '세탁소에 맡기려면',
+      guideSteps: laundry.guideSteps,
+      estCost: laundry.estCost,
+      estTime: laundry.estTime,
+    },
+  };
+}
+
