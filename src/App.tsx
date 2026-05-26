@@ -2,82 +2,70 @@ import React, {useState} from 'react';
 import {StatusBar} from 'react-native';
 import HomeScreen from './screens/HomeScreen';
 import CameraScreen from './screens/CameraScreen';
-import ModelDebugScreen from './screens/ModelDebugScreen';
 import ResultScreen from './screens/ResultScreen';
+import SaveScreen from './screens/SaveScreen';
+import ClosetScreen from './screens/ClosetScreen';
 
-type Screen = 'home' | 'camera' | 'modelDebug' | 'result';
-
-interface DetectionResult {
-  label: string;
-  confidence: number;
-  classId: number;
-}
+type Screen = 'home' | 'camera' | 'result' | 'save' | 'closet';
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('home');
   const [selectedImageUri, setSelectedImageUri] = useState<string>('');
-  const [resizedImageUri, setResizedImageUri] = useState<string>('');
-  const [detections, setDetections] = useState<DetectionResult[]>([]);
+  // 저장용: ResultScreen에서 넘겨받을 데이터
+  const [saveLabels, setSaveLabels] = useState<string[]>([]);
+  const [saveOverallState, setSaveOverallState] = useState<string>('safe');
 
   const handleOpenCamera = () => {
     setCurrentScreen('camera');
   };
 
   const handlePhotoTaken = (uri: string) => {
-    // vision-camera는 file:// 없이 경로를 반환하므로 추가
     const fullUri = uri.startsWith('file://') ? uri : `file://${uri}`;
     setSelectedImageUri(fullUri);
-    setCurrentScreen('modelDebug');
-  };
-
-  const handleImageSelected = (uri: string) => {
-    setSelectedImageUri(uri);
-    setCurrentScreen('modelDebug');
-  };
-
-  const handleResizedImageReady = (uri: string) => {
-    setResizedImageUri(uri);
-  };
-
-  const handleContinueToResult = (dets?: DetectionResult[]) => {
-    if (dets) {
-      setDetections(dets);
-    }
     setCurrentScreen('result');
   };
 
-  const handleRetakeFromDebug = () => {
+  const handleRetake = () => {
     setCurrentScreen('home');
     setSelectedImageUri('');
-    setDetections([]);
-  };
-
-  const handleRetakeFromResult = () => {
-    setCurrentScreen('home');
-    setSelectedImageUri('');
-    setDetections([]);
   };
 
   const handleBackToHome = () => {
     setCurrentScreen('home');
     setSelectedImageUri('');
-    setDetections([]);
   };
 
   const handleCloseCamera = () => {
     setCurrentScreen('home');
   };
 
+  const handleOpenCloset = () => {
+    setCurrentScreen('closet');
+  };
+
+  const handleSaveToCloset = (labels: string[], overallState: string) => {
+    setSaveLabels(labels);
+    setSaveOverallState(overallState);
+    setCurrentScreen('save');
+  };
+
+  const handleSaved = () => {
+    setCurrentScreen('home');
+    setSelectedImageUri('');
+  };
+
+  const isDark = currentScreen === 'camera';
+
   return (
     <>
       <StatusBar
-        barStyle={currentScreen === 'camera' ? 'light-content' : 'dark-content'}
-        backgroundColor={currentScreen === 'camera' ? '#000' : '#fafafa'}
+        barStyle={isDark ? 'light-content' : 'dark-content'}
+        backgroundColor={isDark ? '#000' : '#fff'}
       />
       {currentScreen === 'home' && (
         <HomeScreen
-          onImageSelected={handleImageSelected}
           onOpenCamera={handleOpenCamera}
+          onOpenCloset={handleOpenCloset}
         />
       )}
       {currentScreen === 'camera' && (
@@ -86,21 +74,24 @@ export default function App() {
           onClose={handleCloseCamera}
         />
       )}
-      {currentScreen === 'modelDebug' && (
-        <ModelDebugScreen
-          imageUri={selectedImageUri}
-          onContinue={handleContinueToResult}
-          onRetake={handleRetakeFromDebug}
-          onResizedImageReady={handleResizedImageReady}
-        />
-      )}
       {currentScreen === 'result' && (
         <ResultScreen
-          imageUri={resizedImageUri || selectedImageUri}
-          detections={detections}
+          imageUri={selectedImageUri}
           onBackToHome={handleBackToHome}
-          onRetake={handleRetakeFromResult}
+          onRetake={handleRetake}
+          onSaveToCloset={handleSaveToCloset}
         />
+      )}
+      {currentScreen === 'save' && (
+        <SaveScreen
+          labels={saveLabels}
+          overallState={saveOverallState}
+          onSaved={handleSaved}
+          onBack={() => setCurrentScreen('result')}
+        />
+      )}
+      {currentScreen === 'closet' && (
+        <ClosetScreen onBack={handleBackToHome} />
       )}
     </>
   );
