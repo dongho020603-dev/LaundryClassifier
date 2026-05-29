@@ -199,7 +199,8 @@ HomeScreen > CameraScreen > ModelDebugScreen > ResultScreen
 
 ## 개발자
 
-- **서동호**
+- 앱 개발자 : **서동호**
+- 모델 개발자 : **이동수**
 
 ---
 
