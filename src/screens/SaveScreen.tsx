@@ -98,7 +98,9 @@ export default function SaveScreen({
                   : s.chipSafe;
               return (
                 <View key={idx} style={[s.chip, chipStyle]}>
-                  <Text style={s.chipText}>{sym.value}</Text>
+                  <Text style={s.chipText}>
+                    {sym.status === '금지' ? sym.card : sym.value}
+                  </Text>
                 </View>
               );
             })}
