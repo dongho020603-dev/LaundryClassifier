@@ -429,6 +429,7 @@ export function statusToState(status: SymbolStatus, isPro: boolean): StateType {
     case '안전': return 'safe';
     case '주의': return 'caution';
     case '금지': return 'forbidden';
+    default: return 'safe';  
   }
 }
 
