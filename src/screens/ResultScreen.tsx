@@ -21,6 +21,7 @@ import {
   case1Subtype,
   getStoreDialogues,
   hasProOption,
+  sortLabelsByCategory,
   type CaseType,
 } from '../data/laundryLogic';
 import NativeLaundryYOLO, {Detection} from '../services/NativeLaundryYOLO';
@@ -42,6 +43,7 @@ interface ResultScreenProps {
   onBackToHome: () => void;
   onRetake: () => void;
   onSaveToCloset?: (labels: string[], overallState: string) => void;
+  preloadedLabels?: string[];  // 옷장에서 열 때: YOLO 스킵, labels 직접 전달
 }
 
 // ─── 상수 ────────────────────────────────────────────────
@@ -111,9 +113,12 @@ export default function ResultScreen({
   onBackToHome,
   onRetake,
   onSaveToCloset,
+  preloadedLabels,
 }: ResultScreenProps) {
+  const isPreloaded = !!preloadedLabels && preloadedLabels.length > 0;
+
   // 추론 상태
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(!isPreloaded);
   const [error, setError] = useState<string | null>(null);
   const [resizedImage, setResizedImage] = useState<ResizedImageInfo | null>(
     null,
@@ -127,7 +132,9 @@ export default function ResultScreen({
 
   // ── 추론 파이프라인 ──
   useEffect(() => {
-    runInference();
+    if (!isPreloaded) {
+      runInference();
+    }
   }, [imageUri]);
 
   const runInference = async () => {
@@ -169,8 +176,13 @@ export default function ResultScreen({
 
   // ── 파생 데이터 ──
   const labels = useMemo(
-    () => detections.map(d => d.label).filter(l => SYMBOLS[l]),
-    [detections],
+    () =>
+      sortLabelsByCategory(
+        isPreloaded
+          ? preloadedLabels!
+          : detections.map((d: DetectionResult) => d.label).filter((l: string) => SYMBOLS[l]),
+      ),
+    [detections, isPreloaded, preloadedLabels],
   );
   const counts = useMemo(() => countByStatus(labels), [labels]);
   const overallState = useMemo(
@@ -355,14 +367,17 @@ export default function ResultScreen({
     );
   };
 
-  // 저장 버튼
-  const renderSaveButton = () => (
-    <View style={st.saveButtonContainer}>
-      <TouchableOpacity style={st.saveButton} onPress={handleSave}>
-        <Text style={st.saveButtonText}>옷장에 저장</Text>
-      </TouchableOpacity>
-    </View>
-  );
+  // 저장 버튼 (preloaded 모드에서는 숨김)
+  const renderSaveButton = () => {
+    if (isPreloaded) return null;
+    return (
+      <View style={st.saveButtonContainer}>
+        <TouchableOpacity style={st.saveButton} onPress={handleSave}>
+          <Text style={st.saveButtonText}>옷장에 저장</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   // ══════════════════════════════════════════════════════════
   // 케이스별 렌더링
@@ -646,35 +661,43 @@ export default function ResultScreen({
         <TouchableOpacity onPress={onBackToHome} style={st.backButton}>
           <Text style={st.backButtonText}>{'←'}</Text>
         </TouchableOpacity>
-        <Text style={st.headerTitle}>인식 결과</Text>
+        <Text style={st.headerTitle}>
+          {isPreloaded ? '세탁 정보' : '인식 결과'}
+        </Text>
         <View style={{width: 40}} />
       </View>
 
-      {/* 탭 바 */}
-      <View style={st.tabBar}>
-        <TouchableOpacity
-          style={[st.tab, activeTab === 'result' && st.tabActive]}
-          onPress={() => setActiveTab('result')}>
-          <Text
-            style={[st.tabText, activeTab === 'result' && st.tabTextActive]}>
-            인식 결과
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[st.tab, activeTab === 'analysis' && st.tabActive]}
-          onPress={() => setActiveTab('analysis')}>
-          <Text
-            style={[
-              st.tabText,
-              activeTab === 'analysis' && st.tabTextActive,
-            ]}>
-            라벨 분석
-          </Text>
-        </TouchableOpacity>
-      </View>
+      {/* 탭 바 (preloaded 모드에서는 숨김) */}
+      {!isPreloaded && (
+        <View style={st.tabBar}>
+          <TouchableOpacity
+            style={[st.tab, activeTab === 'result' && st.tabActive]}
+            onPress={() => setActiveTab('result')}>
+            <Text
+              style={[st.tabText, activeTab === 'result' && st.tabTextActive]}>
+              인식 결과
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[st.tab, activeTab === 'analysis' && st.tabActive]}
+            onPress={() => setActiveTab('analysis')}>
+            <Text
+              style={[
+                st.tabText,
+                activeTab === 'analysis' && st.tabTextActive,
+              ]}>
+              라벨 분석
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* 탭 콘텐츠 */}
-      {activeTab === 'result' ? renderResultTab() : renderAnalysisTab()}
+      {isPreloaded
+        ? renderResultTab()
+        : activeTab === 'result'
+        ? renderResultTab()
+        : renderAnalysisTab()}
     </SafeAreaView>
   );
 }

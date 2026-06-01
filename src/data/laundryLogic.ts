@@ -59,6 +59,18 @@ export interface StoreDialogueItem {
   badge: string;
 }
 
+// ─── labels 카테고리 순 정렬 ─────────────────────────────
+
+export function sortLabelsByCategory(labels: string[]): string[] {
+  return [...labels].sort((a, b) => {
+    const sa = SYMBOLS[a];
+    const sb = SYMBOLS[b];
+    const ia = sa ? CATEGORY_ORDER.indexOf(sa.category) : 999;
+    const ib = sb ? CATEGORY_ORDER.indexOf(sb.category) : 999;
+    return ia - ib;
+  });
+}
+
 // ─── 분류 / 정렬 ────────────────────────────────────────
 
 export function categorize(detected: string[]) {
