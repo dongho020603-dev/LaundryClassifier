@@ -1,0 +1,11 @@
+*.pt
+*.pth
+*.tflite
+*.onnx
+*.npy
+*.ttf
+*.jpg
+*.jpeg
+*.png
+datasets/
+runs/
