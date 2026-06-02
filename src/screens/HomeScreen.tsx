@@ -53,7 +53,7 @@ export default function HomeScreen({onOpenCamera, onOpenCloset}: HomeScreenProps
         </View>
 
         {/* 앱 이름 */}
-        <Text style={styles.title}>빨래해</Text>
+        <Text style={styles.title}>빨래야호</Text>
 
         {/* 서브텍스트 */}
         <Text style={styles.subtitle}>
