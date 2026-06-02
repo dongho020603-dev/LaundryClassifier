@@ -10,6 +10,7 @@ import {
   Modal,
 } from 'react-native';
 import {SYMBOLS, CATEGORY_ORDER} from '../data/laundrySymbolData';
+import {sortLabelsByCategory} from '../data/laundryLogic';
 import {
   getClosetItems,
   deleteClosetItem,
@@ -18,6 +19,7 @@ import {
 
 interface ClosetScreenProps {
   onBack: () => void;
+  onViewDetail?: (labels: string[]) => void;
 }
 
 // 케이스 매핑: HTML 프로토타입 기준
@@ -40,7 +42,7 @@ function getCaseInfo(item: ClosetItem) {
   return {case: 1, label: '집에서', color: '#3B6D11', bg: '#EAF3DE'};
 }
 
-const CASE_ORDER = [2, 3, 1, 0];
+const CASE_ORDER = [1, 3, 2, 0];
 const CASE_TITLES: Record<number, {title: string; sub: string}> = {
   2: {title: '세탁소에 맡길 옷', sub: '집에서 빨면 안 돼요'},
   3: {title: '세탁 자유', sub: '집 또는 세탁소'},
@@ -68,7 +70,7 @@ const STATUS_BG: Record<string, string> = {
   '금지': '#FCEBEB',
 };
 
-export default function ClosetScreen({onBack}: ClosetScreenProps) {
+export default function ClosetScreen({onBack, onViewDetail}: ClosetScreenProps) {
   const [items, setItems] = useState<ClosetItem[]>([]);
   const [filter, setFilter] = useState<'all' | number>('all');
 
@@ -104,13 +106,23 @@ export default function ClosetScreen({onBack}: ClosetScreenProps) {
     ]);
   };
 
-  // 세부 필터 토글
+  // 세부 필터 토글 (카테고리 내 단일선택)
   const toggleSymbol = (key: string) => {
+    const sym = SYMBOLS[key];
+    const cat = sym?.category;
     setSelectedSymbols(prev => {
       const next = new Set(prev);
       if (next.has(key)) {
         next.delete(key);
       } else {
+        // 같은 카테고리의 기존 선택 해제
+        if (cat) {
+          for (const k of prev) {
+            if (SYMBOLS[k]?.category === cat) {
+              next.delete(k);
+            }
+          }
+        }
         next.add(key);
       }
       return next;
@@ -141,9 +153,9 @@ export default function ClosetScreen({onBack}: ClosetScreenProps) {
         const ci = getCaseInfo(item);
         if (ci.case !== filter) return false;
       }
-      // 세부 심볼 필터
+      // 세부 심볼 필터 (AND: 선택한 조건을 모두 포함해야 표시)
       if (selectedSymbols.size > 0) {
-        return [...selectedSymbols].some(sym => item.labels.includes(sym));
+        return [...selectedSymbols].every(sym => item.labels.includes(sym));
       }
       return true;
     });
@@ -171,8 +183,8 @@ export default function ClosetScreen({onBack}: ClosetScreenProps) {
 
   // 카테고리별 선택 개수
   const selectedCountByCategory = (cat: string) => {
-    const catSymKeys = FILTER_CATEGORIES.find(c => c.key === cat)?.symbols.map(
-      s => s.key,
+    const catSymKeys = closetFilterCategories.find(c => c.key === cat)?.symbols.map(
+      sym => sym.key,
     );
     if (!catSymKeys) return 0;
     return catSymKeys.filter(k => selectedSymbols.has(k)).length;
@@ -185,6 +197,17 @@ export default function ClosetScreen({onBack}: ClosetScreenProps) {
       card: SYMBOLS[key]?.card || key,
     }));
   }, [selectedSymbols]);
+
+  // 옷장에 존재하는 심볼만 모은 카테고리 (필터 모달용)
+  const closetFilterCategories = useMemo(() => {
+    const allLabels = new Set(items.flatMap(item => item.labels));
+    return FILTER_CATEGORIES
+      .map(cat => ({
+        ...cat,
+        symbols: cat.symbols.filter(sym => allLabels.has(sym.key)),
+      }))
+      .filter(cat => cat.symbols.length > 0);
+  }, [items]);
 
   return (
     <SafeAreaView style={s.container}>
@@ -232,7 +255,10 @@ export default function ClosetScreen({onBack}: ClosetScreenProps) {
               s.filterButton,
               selectedSymbols.size > 0 && s.filterButtonActive,
             ]}
-            onPress={() => setShowFilterModal(true)}>
+            onPress={() => {
+              setExpandedCategories(new Set(closetFilterCategories.map(c => c.key)));
+              setShowFilterModal(true);
+            }}>
             <Text
               style={[
                 s.filterButtonIcon,
@@ -312,7 +338,11 @@ export default function ClosetScreen({onBack}: ClosetScreenProps) {
               {caseItems.map(item => {
                 const itemCase = getCaseInfo(item);
                 return (
-                  <View key={item.id} style={s.clothCard}>
+                  <TouchableOpacity
+                    key={item.id}
+                    style={s.clothCard}
+                    activeOpacity={0.7}
+                    onPress={() => onViewDetail?.(item.labels)}>
                     <View style={s.clothRow}>
                       <View
                         style={[s.clothThumb, {backgroundColor: ci.bg}]}>
@@ -347,7 +377,7 @@ export default function ClosetScreen({onBack}: ClosetScreenProps) {
                         </View>
                         {/* 심볼 칩 */}
                         <View style={s.symbolStrip}>
-                          {item.labels.slice(0, 4).map((label, idx) => {
+                          {sortLabelsByCategory(item.labels).map((label, idx) => {
                             const sym = SYMBOLS[label];
                             if (!sym) return null;
                             const chipStyle =
@@ -363,16 +393,11 @@ export default function ClosetScreen({onBack}: ClosetScreenProps) {
                                 key={idx}
                                 style={[s.symbolChip, chipStyle]}>
                                 <Text style={s.symbolChipText}>
-                                  {sym.value}
+                                  {sym.card}
                                 </Text>
                               </View>
                             );
                           })}
-                          {item.labels.length > 4 && (
-                            <Text style={s.moreText}>
-                              +{item.labels.length - 4}
-                            </Text>
-                          )}
                         </View>
                         {item.memo ? (
                           <Text style={s.clothMemo} numberOfLines={1}>
@@ -386,7 +411,7 @@ export default function ClosetScreen({onBack}: ClosetScreenProps) {
                         <Text style={s.deleteBtnText}>✕</Text>
                       </TouchableOpacity>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 );
               })}
             </View>
@@ -425,7 +450,7 @@ export default function ClosetScreen({onBack}: ClosetScreenProps) {
             <ScrollView
               style={s.modalScroll}
               contentContainerStyle={s.modalScrollInner}>
-              {FILTER_CATEGORIES.map(cat => {
+              {closetFilterCategories.map(cat => {
                 const isExpanded = expandedCategories.has(cat.key);
                 const catSelectedCount = selectedCountByCategory(cat.key);
 
@@ -553,8 +578,14 @@ const s = StyleSheet.create({
     alignItems: 'center',
   },
   pillSelected: {
-    borderWidth: 2,
+    borderWidth: 2.5,
     borderColor: '#1F1F1D',
+    transform: [{scale: 1.05}],
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
   },
   pillC1: {backgroundColor: '#EAF3DE'},
   pillC3: {backgroundColor: '#F5EBDA'},
@@ -781,7 +812,7 @@ const s = StyleSheet.create({
     backgroundColor: '#F5F2EB',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '85%',
+    height: '75%',
   },
   modalHeader: {
     flexDirection: 'row',
