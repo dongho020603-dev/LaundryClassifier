@@ -12,7 +12,7 @@ def main():
         batch=16,
         device=0, # 할당된 단일 GPU 사용
         project='laundry_project',
-        name='test_run_v1',
+        name='test_run_v2',
 
         # [필수] YOLO 자체 반전 증강 비활성화 (기호 의미 변질 방지)
         fliplr=0.0, 
